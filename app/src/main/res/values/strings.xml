@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Oxygen</string>
+    <string name="notification_channel_generations">Generation status</string>
+    <string name="notification_channel_generations_desc">Shows progress while Oxygen is answering in the background</string>
+    <string name="notification_generating">Generating response…</string>
+    <string name="notification_response_ready">Your response is ready</string>
+    <string name="notification_stop">Stop</string>
+</resources>

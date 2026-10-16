@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Oxygen" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/oxygen_window_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.Oxygen.Main</item>
+    </style>
+
+    <style name="Theme.Oxygen.Main" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/oxygen_window_bg</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>
