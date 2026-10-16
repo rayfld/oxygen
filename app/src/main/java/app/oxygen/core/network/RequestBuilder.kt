@@ -85,6 +85,42 @@ object RequestBuilder {
         }
         return body
     }
+    fun buildImage(
+        modelId: String,
+        prompt: String,
+        params: ChatParams,
+        inputReferences: List<String> = emptyList(),
+    ): JsonObject {
+        var body = buildJsonObject {
+            put("model", modelId)
+            put("prompt", prompt)
+            if (inputReferences.isNotEmpty()) {
+                put(
+                    "input_references",
+                    buildJsonArray {
+                        inputReferences.forEach { url ->
+                            add(
+                                buildJsonObject {
+                                    put("type", "image_url")
+                                    put("image_url", buildJsonObject { put("url", url) })
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+            params.imageCount?.let { put("n", it.coerceIn(1, 10)) }
+            params.imageResolution?.takeIf { it.isNotBlank() }?.let { put("resolution", it) }
+            params.imageAspectRatio?.takeIf { it.isNotBlank() }?.let { put("aspect_ratio", it) }
+            params.imageQuality?.takeIf { it.isNotBlank() }?.let { put("quality", it) }
+            params.imageOutputFormat?.takeIf { it.isNotBlank() }?.let { put("output_format", it) }
+            params.imageBackground?.takeIf { it.isNotBlank() }?.let { put("background", it) }
+        }
+        params.extraBody?.let { extra ->
+            parseJsonObjectOrNull(extra)?.let { body = body.deepMergeLocal(it) }
+        }
+        return body
+    }
     private fun JsonObject.deepMergeLocal(overlay: JsonObject): JsonObject {
         val result = LinkedHashMap<String, kotlinx.serialization.json.JsonElement>(this)
         for ((key, value) in overlay) {

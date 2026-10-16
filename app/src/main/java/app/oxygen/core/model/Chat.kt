@@ -1,5 +1,6 @@
 package app.oxygen.core.model
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 @Serializable
 enum class Role { SYSTEM, USER, ASSISTANT, TOOL }
 @Serializable
@@ -28,6 +29,20 @@ data class Citation(
     val content: String?,
 )
 @Serializable
+data class TraceStep(
+    val kind: Kind,
+    val text: String = "",
+    val query: String? = null,
+    val urls: List<String> = emptyList(),
+) {
+    @Serializable
+    enum class Kind { THINKING, WEB_SEARCH }
+    companion object {
+        fun thinking(text: String) = TraceStep(Kind.THINKING, text = text)
+        fun webSearch(query: String?, urls: List<String>) = TraceStep(Kind.WEB_SEARCH, query = query, urls = urls)
+    }
+}
+@Serializable
 data class ChatMessage(
     val id: String,
     val conversationId: String,
@@ -39,6 +54,7 @@ data class ChatMessage(
     val toolCallId: String? = null,
     val attachments: List<Attachment> = emptyList(),
     val citations: List<Citation> = emptyList(),
+    val trace: List<TraceStep> = emptyList(),
     val modelId: String? = null,
     val provider: String? = null,
     val status: MessageStatus = MessageStatus.COMPLETE,
@@ -123,6 +139,12 @@ data class ChatParams(
     val middleOut: Boolean? = null,
     val responseFormat: String? = null,
     val jsonSchema: String? = null,
+    val imageResolution: String? = null,
+    val imageAspectRatio: String? = null,
+    val imageQuality: String? = null,
+    val imageOutputFormat: String? = null,
+    val imageBackground: String? = null,
+    val imageCount: Int? = null,
     val fallbackModels: List<String> = emptyList(),
     val provider: ProviderPrefs = ProviderPrefs(),
     val extraBody: String? = null,
@@ -146,8 +168,25 @@ data class ChatModel(
     val isFree: Boolean,
     val popularityScore: Long? = null,
     val canonicalSlug: String? = null,
+    val imageGeneration: Boolean = false,
+    val imageParams: JsonObject? = null,
 ) {
     val slug: String get() = id.substringAfter('/')
+    val isImageOnly: Boolean get() = outputModalities.isNotEmpty() && "text" !in outputModalities
+    fun imageOptions(name: String): List<String> =
+        imageParams?.get(name)?.let { spec ->
+            (spec as? JsonObject)?.get("values")?.let { values ->
+                (values as? kotlinx.serialization.json.JsonArray)
+                    ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+            }
+        } ?: emptyList()
+    fun imageRange(name: String): IntRange? {
+        val spec = imageParams?.get(name) as? JsonObject ?: return null
+        val min = (spec["min"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: return null
+        val max = (spec["max"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: return null
+        return min..max
+    }
+    fun supportsImageParam(name: String): Boolean = imageParams?.containsKey(name) == true
     val shortName: String
         get() {
             val cleaned = name.replace(NAME_PREFIX_REGEX, "").trim()

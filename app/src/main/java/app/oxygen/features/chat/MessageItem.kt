@@ -88,6 +88,7 @@ import app.oxygen.core.model.Citation
 import app.oxygen.core.model.MessageStatus
 import app.oxygen.core.model.Role
 import app.oxygen.core.model.ToolCall
+import app.oxygen.core.model.TraceStep
 import app.oxygen.core.util.Fmt
 import app.oxygen.core.util.prettyJsonOrOriginal
 import app.oxygen.OxygenApp
@@ -102,7 +103,6 @@ import app.oxygen.ui.components.OxDropdownMenu
 import app.oxygen.ui.components.OxIconButton
 import app.oxygen.ui.components.OxLoadingDots
 import app.oxygen.ui.components.OxMenuAction
-import app.oxygen.ui.components.OxModelAvatar
 import app.oxygen.ui.components.OxMultilineField
 import app.oxygen.ui.components.OxTextField
 import app.oxygen.ui.components.OxDialog
@@ -114,6 +114,8 @@ import app.oxygen.ui.theme.OxType
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
 @Composable
 fun MessageItem(
@@ -849,7 +851,28 @@ fun StreamingMessage(
     Row(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Column(Modifier.weight(1f)) {
             val liveSteps = buildList {
-                if (stream.reasoning.isNotBlank()) add(ChatViewModel.WorkStep.Thinking(stream.reasoning))
+                if (stream.trace.isNotEmpty()) {
+                    stream.trace.forEachIndexed { index, step ->
+                        when (step.kind) {
+                            TraceStep.Kind.THINKING ->
+                                if (step.text.isNotBlank()) add(ChatViewModel.WorkStep.Thinking(step.text))
+                            TraceStep.Kind.WEB_SEARCH -> add(
+                                ChatViewModel.WorkStep.Tool(
+                                    ToolCall(
+                                        id = "web-live-$index",
+                                        name = "web_search",
+                                        arguments = step.query?.takeIf { it.isNotBlank() }?.let { query ->
+                                            buildJsonObject { put("query", query) }.toString()
+                                        }.orEmpty(),
+                                    ),
+                                    result = step.urls.takeIf { it.isNotEmpty() }?.joinToString("\n"),
+                                ),
+                            )
+                        }
+                    }
+                } else if (stream.reasoning.isNotBlank()) {
+                    add(ChatViewModel.WorkStep.Thinking(stream.reasoning))
+                }
                 stream.toolCalls.forEach { call ->
                     add(ChatViewModel.WorkStep.Tool(ToolCall(call.id, call.name, call.arguments), null))
                 }
@@ -874,7 +897,11 @@ fun StreamingMessage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OxLoadingDots()
                     Spacer(Modifier.width(10.dp))
-                    val base = if (stream.phase == GenerationManager.Phase.CONNECTING) "Connecting" else "Thinking"
+                    val base = when {
+                        stream.imageGeneration -> "Generating image"
+                        stream.phase == GenerationManager.Phase.CONNECTING -> "Connecting"
+                        else -> "Thinking"
+                    }
                     Text(
                         if (elapsed >= 2) "$base ${elapsed}s" else base,
                         style = OxType.bodySmall,

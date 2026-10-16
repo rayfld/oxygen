@@ -44,7 +44,6 @@ import app.oxygen.ui.components.OxDropdownItem
 import app.oxygen.ui.components.OxDropdownMenu
 import app.oxygen.ui.components.OxIconButton
 import app.oxygen.ui.components.OxMenuAction
-import app.oxygen.ui.components.OxModelAvatar
 import app.oxygen.ui.components.OxSearchField
 import app.oxygen.ui.components.OxSheet
 import app.oxygen.ui.components.OxSheetTitle

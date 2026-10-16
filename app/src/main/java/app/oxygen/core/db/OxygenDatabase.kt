@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GenerationEntity::class,
         PresetEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class OxygenDatabase : RoomDatabase() {
@@ -28,9 +28,14 @@ abstract class OxygenDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE conversations ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN traceJson TEXT")
+            }
+        }
         fun build(context: Context): OxygenDatabase =
             Room.databaseBuilder(context, OxygenDatabase::class.java, "oxygen.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
     }

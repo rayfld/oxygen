@@ -87,6 +87,12 @@ class ModelsRepository(
         if (mapped.isEmpty()) {
             throw IllegalStateException("Model list came back empty")
         }
+        val imageModels = runCatching { decodeImageModels(client.listImageModelsRaw(apiKey)) }
+            .getOrDefault(emptyList())
+        if (imageModels.isNotEmpty()) {
+            val known = mapped.mapTo(HashSet()) { it.id }
+            mapped = mapped + imageModels.filter { it.id !in known }
+        }
         if (apiKey.isNotBlank()) {
             val scores = runCatching { fetchPopularityScores(apiKey) }.getOrDefault(emptyMap())
             if (scores.isNotEmpty()) {
@@ -146,8 +152,13 @@ class ModelsRepository(
         }
         val author = modelId.substringBefore('/').removePrefix("~")
         val slug = modelId.substringAfter('/').substringBefore(':')
+        val isImage = loaded?.firstOrNull { it.id == modelId }?.imageGeneration == true
         return runCatching {
-            decodeEndpoints(client.listEndpointsRaw(apiKey, author, slug))
+            if (isImage) {
+                decodeEndpoints(client.listImageEndpointsRaw(apiKey, author, slug))
+            } else {
+                decodeEndpoints(client.listEndpointsRaw(apiKey, author, slug))
+            }
         }.onSuccess { result ->
             endpointCache[modelId] = System.currentTimeMillis() to result
         }
@@ -219,6 +230,38 @@ internal fun decodeModels(text: String): List<ChatModel> {
             cacheReadPrice = pricing.str("input_cache_read")?.toDoubleOrNull(),
             cacheWritePrice = pricing.str("input_cache_write")?.toDoubleOrNull(),
             isFree = prompt == 0.0 && completion == 0.0,
+        )
+    }
+}
+internal fun decodeImageModels(text: String): List<ChatModel> {
+    val root = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return emptyList()
+    val array = root.arr("data") ?: return emptyList()
+    return array.mapNotNull { element ->
+        val obj = element.obj() ?: return@mapNotNull null
+        val id = obj.str("id")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        val architecture = obj.obj("architecture")
+        val input = architecture?.arr("input_modalities")
+            ?.mapNotNull { (it as? JsonPrimitive)?.content } ?: listOf("text")
+        val output = architecture?.arr("output_modalities")
+            ?.mapNotNull { (it as? JsonPrimitive)?.content } ?: listOf("image")
+        val spec = obj.obj("supported_parameters")
+        ChatModel(
+            id = id,
+            name = obj.str("name")?.takeIf { it.isNotBlank() } ?: id,
+            author = id.substringBefore('/'),
+            description = obj.str("description"),
+            contextLength = null,
+            createdAt = obj["created"].long() ?: 0L,
+            inputModalities = input,
+            outputModalities = output,
+            supportedParams = spec?.keys ?: emptySet(),
+            promptPrice = null,
+            completionPrice = null,
+            cacheReadPrice = null,
+            cacheWritePrice = null,
+            isFree = false,
+            imageGeneration = true,
+            imageParams = spec,
         )
     }
 }

@@ -11,6 +11,7 @@ import app.oxygen.core.model.Conversation
 import app.oxygen.core.model.MessageStatus
 import app.oxygen.core.model.Role
 import app.oxygen.core.model.ToolCall
+import app.oxygen.core.model.TraceStep
 import app.oxygen.data.AppSettings
 import app.oxygen.data.GenerationManager
 import app.oxygen.data.toDomain
@@ -24,6 +25,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 class ChatViewModel(
     private val conversationId: String,
 ) : ViewModel() {
@@ -132,7 +135,29 @@ class ChatViewModel(
             var hasTools = false
             for (message in buffer) {
                 if (message.role == Role.ASSISTANT) {
-                    if (!message.reasoning.isNullOrBlank()) steps += WorkStep.Thinking(message.reasoning)
+                    if (message.trace.isNotEmpty()) {
+                        message.trace.forEachIndexed { index, step ->
+                            when (step.kind) {
+                                TraceStep.Kind.THINKING ->
+                                    if (step.text.isNotBlank()) steps += WorkStep.Thinking(step.text)
+                                TraceStep.Kind.WEB_SEARCH -> {
+                                    hasTools = true
+                                    steps += WorkStep.Tool(
+                                        call = ToolCall(
+                                            id = "web-${message.id}-$index",
+                                            name = "web_search",
+                                            arguments = step.query?.takeIf { it.isNotBlank() }?.let { query ->
+                                                buildJsonObject { put("query", query) }.toString()
+                                            }.orEmpty(),
+                                        ),
+                                        result = step.urls.takeIf { it.isNotEmpty() }?.joinToString("\n"),
+                                    )
+                                }
+                            }
+                        }
+                    } else if (!message.reasoning.isNullOrBlank()) {
+                        steps += WorkStep.Thinking(message.reasoning)
+                    }
                     if (message != finalMessage && message.content.isNotBlank()) steps += WorkStep.Say(message.content)
                     message.toolCalls.forEach { call ->
                         hasTools = true

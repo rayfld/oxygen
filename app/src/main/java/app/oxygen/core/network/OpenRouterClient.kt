@@ -87,6 +87,11 @@ class OpenRouterClient(
     suspend fun listModels(apiKey: String): List<ModelDto> =
         json.decodeFromString(ModelsEnvelopeDto.serializer(), executeJson(apiKey, "$base/models")).data
     suspend fun listModelsRaw(apiKey: String): String = executeJson(apiKey, "$base/models")
+    suspend fun listImageModelsRaw(apiKey: String): String = executeJson(apiKey, "$base/images/models")
+    suspend fun generateImage(apiKey: String, body: JsonObject): String =
+        executeJson(apiKey, "$base/images", method = "POST", body = body)
+    suspend fun listImageEndpointsRaw(apiKey: String, author: String, slug: String): String =
+        executeJson(apiKey, "$base/images/models/$author/$slug/endpoints")
     suspend fun listEndpointsRaw(apiKey: String, author: String, slug: String): String =
         executeJson(apiKey, "$base/models/$author/$slug/endpoints")
     suspend fun getRankingsDaily(apiKey: String): List<RankingRowDto> =

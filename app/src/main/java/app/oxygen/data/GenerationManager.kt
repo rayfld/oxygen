@@ -10,6 +10,7 @@ import app.oxygen.core.model.MessageStatus
 import app.oxygen.core.model.Role
 import app.oxygen.core.model.TokenUsage
 import app.oxygen.core.model.ToolCall
+import app.oxygen.core.model.TraceStep
 import app.oxygen.core.network.ApiException
 import app.oxygen.core.network.OpenRouterClient
 import app.oxygen.core.network.RequestBuilder
@@ -17,8 +18,14 @@ import app.oxygen.core.network.ToolCallDeltaDto
 import app.oxygen.core.network.friendlyMessage
 import app.oxygen.core.tools.LocalToolExecutor
 import app.oxygen.core.tools.Tools
+import app.oxygen.core.util.arr
+import app.oxygen.core.util.dbl
+import app.oxygen.core.util.int
 import app.oxygen.core.util.newId
 import app.oxygen.core.util.now
+import app.oxygen.core.util.obj
+import app.oxygen.core.util.parseJsonObjectOrNull
+import app.oxygen.core.util.str
 import app.oxygen.service.GenerationService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -58,7 +65,9 @@ class GenerationManager(
         val reasoning: String = "",
         val toolCalls: List<UiToolCall> = emptyList(),
         val citations: List<Citation> = emptyList(),
+        val trace: List<TraceStep> = emptyList(),
         val images: List<String> = emptyList(),
+        val imageGeneration: Boolean = false,
         val phase: Phase = Phase.CONNECTING,
         val error: String? = null,
         val startedAt: Long = now(),
@@ -208,14 +217,122 @@ class GenerationManager(
         accumulator.modelIdOverride = chat.getMessage(assistantMessageId)?.modelId
         accumulator.leafForChain = leafForChain
         val effectiveModel = accumulator.modelIdOverride ?: conversation.modelId
-        val body = buildBody(conversation, accumulator, effectiveModel)
+        val isImageModel = models.byId(effectiveModel).imageGeneration
+        accumulator.imageGeneration = isImageModel
         accumulators[conversation.id] = accumulator
         publish(conversation, accumulator, Phase.CONNECTING)
         settings.markModelUsed(effectiveModel)
         val job = scope.launch {
-            runStream(conversation, accumulator, apiKey, body)
+            if (isImageModel) {
+                runImageGeneration(conversation, accumulator, apiKey, effectiveModel)
+            } else {
+                runStream(conversation, accumulator, apiKey, buildBody(conversation, accumulator, effectiveModel))
+            }
         }
         jobs[conversation.id] = job
+    }
+    private suspend fun runImageGeneration(
+        conversation: Conversation,
+        accumulator: StreamAccumulator,
+        apiKey: String,
+        modelId: String,
+    ) {
+        val userMessage = chat.chain(conversation.id, accumulator.leafForChain)
+            .lastOrNull { it.role == Role.USER }
+        val prompt = userMessage?.content?.trim().orEmpty()
+        if (prompt.isBlank()) {
+            finalizeImageError(conversation, accumulator, "Describe the image you want first.")
+            return
+        }
+        val references = userMessage?.attachments
+            ?.filter { it.kind == app.oxygen.core.model.Attachment.Kind.IMAGE }
+            ?.mapNotNull { attachments.toDataUrl(it) }
+            .orEmpty()
+        try {
+            val body = RequestBuilder.buildImage(modelId, prompt, conversation.params, references)
+            val raw = client.generateImage(apiKey, body)
+            val root = parseJsonObjectOrNull(raw)
+            val images = root?.arr("data") ?: emptyList()
+            val saved = ArrayList<app.oxygen.core.model.Attachment>()
+            for (element in images) {
+                val obj = element.obj() ?: continue
+                val b64 = obj.str("b64_json")?.takeIf { it.isNotBlank() } ?: continue
+                val mime = obj.str("media_type")?.takeIf { it.isNotBlank() } ?: "image/png"
+                attachments.attachmentFromUrl("data:$mime;base64,$b64")?.let { saved += it }
+            }
+            val usage = root?.obj("usage")
+            val cost = usage?.dbl("cost")
+            if (saved.isEmpty()) {
+                finalizeImageError(conversation, accumulator, "The model did not return an image. Try again or pick another model.")
+                return
+            }
+            withContext(NonCancellable) {
+                val existing = chat.getMessage(accumulator.messageId) ?: placeholder(conversation, accumulator)
+                val finalized = existing.copy(
+                    content = "",
+                    attachments = (existing.attachments) + saved,
+                    modelId = modelId,
+                    status = MessageStatus.COMPLETE,
+                    error = null,
+                    costUsd = cost,
+                    promptTokens = usage?.int("prompt_tokens"),
+                    completionTokens = usage?.int("completion_tokens"),
+                    latencyMs = now() - accumulator.startedAt,
+                )
+                chat.upsertMessage(finalized)
+                chat.addGeneration(
+                    GenerationEntity(
+                        id = newId(),
+                        generationId = null,
+                        conversationId = conversation.id,
+                        messageId = finalized.id,
+                        modelId = modelId,
+                        provider = null,
+                        costUsd = cost,
+                        promptTokens = usage?.int("prompt_tokens"),
+                        completionTokens = usage?.int("completion_tokens"),
+                        cachedTokens = null,
+                        reasoningTokens = null,
+                        latencyMs = now() - accumulator.startedAt,
+                        ttftMs = null,
+                        createdAt = now(),
+                    ),
+                )
+                chat.touch(conversation.id)
+                finishUi(conversation.id)
+                runCatching { account.refresh() }
+                notifyFinished(conversation)
+            }
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) {
+                val existing = chat.getMessage(accumulator.messageId) ?: placeholder(conversation, accumulator)
+                chat.upsertMessage(
+                    existing.copy(status = MessageStatus.INTERRUPTED, modelId = modelId, latencyMs = now() - accumulator.startedAt),
+                )
+                chat.touch(conversation.id)
+                finishUi(conversation.id)
+            }
+            throw e
+        } catch (e: Exception) {
+            finalizeImageError(conversation, accumulator, e.friendlyMessage())
+        }
+    }
+    private suspend fun finalizeImageError(
+        conversation: Conversation,
+        accumulator: StreamAccumulator,
+        message: String,
+    ) = withContext(NonCancellable) {
+        val existing = chat.getMessage(accumulator.messageId) ?: placeholder(conversation, accumulator)
+        chat.upsertMessage(
+            existing.copy(
+                status = MessageStatus.ERROR,
+                error = message,
+                latencyMs = now() - accumulator.startedAt,
+            ),
+        )
+        chat.touch(conversation.id)
+        finishUi(conversation.id)
+        notifyFinished(conversation)
     }
     private suspend fun buildBody(
         conversation: Conversation,
@@ -280,6 +397,7 @@ class GenerationManager(
                         is ChatEvent.Reasoning -> {
                             if (accumulator.firstTokenAt == null) accumulator.firstTokenAt = now()
                             accumulator.reasoning.append(event.delta)
+                            accumulator.appendThinking(event.delta)
                             publish(conversation, accumulator, Phase.REASONING)
                         }
                         is ChatEvent.ToolCalls -> {
@@ -288,6 +406,7 @@ class GenerationManager(
                         }
                         is ChatEvent.Citations -> {
                             event.items.forEach { accumulator.citations[it.url] = it }
+                            accumulator.recordWebSearch(event.items.map { it.url })
                             publish(conversation, accumulator, Phase.STREAMING, force = true)
                         }
                         is ChatEvent.Images -> {
@@ -376,6 +495,8 @@ class GenerationManager(
                     content = accumulator.content.toString(),
                     reasoning = accumulator.reasoning.toString().takeIf { it.isNotBlank() },
                     toolCalls = toolCalls,
+                    citations = accumulator.citations.values.toList(),
+                    trace = accumulator.trace.toList(),
                     status = MessageStatus.COMPLETE,
                     finishReason = accumulator.finishReason,
                     modelId = accumulator.model ?: accumulator.modelIdOverride ?: conversation.modelId,
@@ -444,6 +565,7 @@ class GenerationManager(
                 reasoning = accumulator.reasoning.toString().takeIf { it.isNotBlank() },
                 toolCalls = toolCalls,
                 citations = accumulator.citations.values.toList(),
+                trace = accumulator.trace.toList(),
                 attachments = (existing?.attachments ?: emptyList()) + generatedAttachments,
                 modelId = accumulator.model ?: accumulator.modelIdOverride ?: conversation.modelId,
                 provider = accumulator.provider,
@@ -496,6 +618,8 @@ class GenerationManager(
         val finalized = (existing ?: placeholder(conversation, accumulator)).copy(
             content = content,
             reasoning = accumulator.reasoning.toString().takeIf { it.isNotBlank() },
+            citations = accumulator.citations.values.toList(),
+            trace = accumulator.trace.toList(),
             modelId = accumulator.model ?: accumulator.modelIdOverride ?: conversation.modelId,
             provider = accumulator.provider,
             status = if (hasPartial) MessageStatus.INTERRUPTED else MessageStatus.ERROR,
@@ -516,6 +640,8 @@ class GenerationManager(
             val finalized = (existing ?: placeholder(conversation, accumulator)).copy(
                 content = content,
                 reasoning = accumulator.reasoning.toString().takeIf { it.isNotBlank() },
+                citations = accumulator.citations.values.toList(),
+                trace = accumulator.trace.toList(),
                 modelId = accumulator.model ?: accumulator.modelIdOverride ?: conversation.modelId,
                 provider = accumulator.provider,
                 status = MessageStatus.INTERRUPTED,
@@ -630,7 +756,9 @@ class GenerationManager(
                         )
                     },
                     citations = accumulator.citations.values.toList(),
+                    trace = accumulator.trace.toList(),
                     images = accumulator.images.toList(),
+                    imageGeneration = accumulator.imageGeneration,
                     phase = phase,
                     startedAt = accumulator.startedAt,
                     firstTokenAt = accumulator.firstTokenAt,
@@ -660,17 +788,38 @@ class GenerationManager(
         var messageId: String,
     ) {
         var modelIdOverride: String? = null
+        var imageGeneration = false
         var iteration = 0
         var leafForChain: String? = null
         val content = StringBuilder()
         val reasoning = StringBuilder()
         val toolCalls = LinkedHashMap<Int, ToolCallAccumulator>()
         val citations = LinkedHashMap<String, Citation>()
+        val trace = ArrayList<TraceStep>()
         val images = LinkedHashSet<String>()
+        fun appendThinking(delta: String) {
+            val last = trace.lastOrNull()
+            if (last != null && last.kind == TraceStep.Kind.THINKING) {
+                trace[trace.lastIndex] = last.copy(text = last.text + delta)
+            } else {
+                trace += TraceStep.thinking(delta)
+            }
+        }
+        fun recordWebSearch(urls: List<String>) {
+            val clean = urls.filter { it.isNotBlank() }.distinct()
+            if (clean.isEmpty()) return
+            val last = trace.lastOrNull()
+            if (last != null && last.kind == TraceStep.Kind.WEB_SEARCH) {
+                trace[trace.lastIndex] = last.copy(urls = (last.urls + clean).distinct())
+            } else {
+                trace += TraceStep.webSearch(query = null, urls = clean)
+            }
+        }
         fun startTurn() {
             content.setLength(0)
             reasoning.setLength(0)
             toolCalls.clear()
+            trace.clear()
             firstTokenAt = null
             finishReason = null
             nativeFinishReason = null

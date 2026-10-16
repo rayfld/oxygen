@@ -37,6 +37,7 @@ data class MessageEntity(
     val toolCallId: String? = null,
     val attachmentsJson: String? = null,
     val citationsJson: String? = null,
+    val traceJson: String? = null,
     val modelId: String? = null,
     val provider: String? = null,
     val status: String = "complete",

@@ -108,6 +108,9 @@ fun ParamsSheet(
                 .heightIn(max = 520.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
+            if (model?.imageGeneration == true) {
+                ImageOptionsSection(model, draft) { draft = it }
+            }
             OxSectionHeader("Instructions")
             OxMultilineField(
                 value = prompt,
@@ -389,6 +392,79 @@ fun ParamsSheet(
                 "Save",
                 onClick = { onSave(draft, prompt) },
                 modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ImageOptionsSection(
+    model: ChatModel,
+    draft: ChatParams,
+    onChange: (ChatParams) -> Unit,
+) {
+    OxSectionHeader("Image", subtitle = "Applies to ${model.shortName}")
+    @Composable fun optionRow(title: String, options: List<String>, current: String?, apply: (String?) -> Unit) {
+        if (options.isEmpty()) return
+        Text(
+            title,
+            style = OxType.labelSmall,
+            color = Ox.colors.textMuted,
+            modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 6.dp),
+        )
+        FlowRow(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            options.forEach { option ->
+                val selected = current == option
+                OxChip(
+                    label = option,
+                    selected = selected,
+                    onClick = { apply(if (selected) null else option) },
+                )
+            }
+        }
+    }
+    optionRow("Aspect ratio", model.imageOptions("aspect_ratio"), draft.imageAspectRatio) {
+        onChange(draft.copy(imageAspectRatio = it))
+    }
+    optionRow("Resolution", model.imageOptions("resolution"), draft.imageResolution) {
+        onChange(draft.copy(imageResolution = it))
+    }
+    optionRow(
+        "Quality",
+        model.imageOptions("quality").ifEmpty { if (model.supportsImageParam("quality")) listOf("auto", "low", "medium", "high") else emptyList() },
+        draft.imageQuality,
+    ) { onChange(draft.copy(imageQuality = it)) }
+    optionRow(
+        "Output format",
+        model.imageOptions("output_format").ifEmpty { if (model.supportsImageParam("output_format")) listOf("png", "jpeg", "webp") else emptyList() },
+        draft.imageOutputFormat,
+    ) { onChange(draft.copy(imageOutputFormat = it)) }
+    optionRow(
+        "Background",
+        model.imageOptions("background").ifEmpty { if (model.supportsImageParam("background")) listOf("auto", "transparent", "opaque") else emptyList() },
+        draft.imageBackground,
+    ) { onChange(draft.copy(imageBackground = it)) }
+    if (model.supportsImageParam("n")) {
+        val range = model.imageRange("n") ?: 1..4
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Images", style = OxType.body, color = Ox.colors.text)
+                Text("Number to generate", style = OxType.labelSmall, color = Ox.colors.textMuted)
+            }
+            OxNumberField(
+                value = draft.imageCount?.toString().orEmpty(),
+                onValueChange = { text ->
+                    onChange(draft.copy(imageCount = text.toIntOrNull()?.coerceIn(range.first, range.last)))
+                },
+                placeholder = "1",
+                modifier = Modifier.width(120.dp),
             )
         }
     }

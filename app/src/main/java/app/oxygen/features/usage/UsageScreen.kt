@@ -36,7 +36,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.oxygen.core.util.Fmt
 import app.oxygen.ui.components.OxCard
 import app.oxygen.ui.components.OxDivider
-import app.oxygen.ui.components.OxModelAvatar
 import app.oxygen.ui.components.OxSectionHeader
 import app.oxygen.ui.components.OxTopBar
 import app.oxygen.ui.theme.Ox

@@ -12,6 +12,7 @@ import app.oxygen.core.model.Conversation
 import app.oxygen.core.model.MessageStatus
 import app.oxygen.core.model.Role
 import app.oxygen.core.model.ToolCall
+import app.oxygen.core.model.TraceStep
 import app.oxygen.core.util.json
 import app.oxygen.core.util.newId
 import app.oxygen.core.util.now
@@ -330,6 +331,7 @@ fun MessageEntity.toDomain(): ChatMessage = ChatMessage(
     toolCallId = toolCallId,
     attachments = decodeList<Attachment>(attachmentsJson),
     citations = decodeList<Citation>(citationsJson),
+    trace = decodeList<TraceStep>(traceJson),
     modelId = modelId,
     provider = provider,
     status = runCatching { MessageStatus.valueOf(status.uppercase()) }.getOrElse { MessageStatus.COMPLETE },
@@ -355,6 +357,7 @@ fun ChatMessage.toEntity(): MessageEntity = MessageEntity(
     toolCallId = toolCallId,
     attachmentsJson = encodeList(attachments),
     citationsJson = encodeList(citations),
+    traceJson = encodeList(trace),
     modelId = modelId,
     provider = provider,
     status = status.name.lowercase(),

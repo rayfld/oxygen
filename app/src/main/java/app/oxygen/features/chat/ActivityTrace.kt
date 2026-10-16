@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -270,9 +271,59 @@ private fun ToolStepBody(step: ChatViewModel.WorkStep.Tool, live: Boolean, activ
         "calculator" -> CalculatorStep(step.call, step.result, running = live && active)
         "datetime" -> DatetimeStep(step.result, running = live && active)
         "shell", "bash" -> ShellStep(step.call, step.result, running = live && active)
+        "web_search" -> WebSearchStep(step.call, step.result, running = live && active)
         else -> ToolCallCard(step.call.name, step.call.arguments, running = live, result = step.result)
     }
 }
+@Composable
+private fun WebSearchStep(call: ToolCall, result: String?, running: Boolean) {
+    val c = Ox.colors
+    val uriHandler = LocalUriHandler.current
+    val query = remember(call.arguments) { extractJsonString(call.arguments, "query") }
+    val sources = remember(result) {
+        result?.lines()?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+    }
+    ToolStepShell("Web search", Icons.Rounded.Language, c.success, running) {
+        if (query != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                query,
+                style = OxType.bodySmall,
+                color = c.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (sources.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            sources.take(8).forEach { url ->
+                Text(
+                    prettyUrl(url),
+                    style = OxType.bodySmall,
+                    color = c.link,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .oxCombinedClickable(onClick = { runCatching { uriHandler.openUri(url) } })
+                        .padding(vertical = 2.dp),
+                )
+            }
+            if (sources.size > 8) {
+                Spacer(Modifier.height(2.dp))
+                Text("+${sources.size - 8} more", style = OxType.labelSmall, color = c.textMuted)
+            }
+        } else if (!running) {
+            Spacer(Modifier.height(4.dp))
+            Text("No sources returned", style = OxType.labelSmall, color = c.textMuted)
+        }
+    }
+}
+private fun prettyUrl(url: String): String = url
+    .removePrefix("https://")
+    .removePrefix("http://")
+    .removePrefix("www.")
+    .trimEnd('/')
 @Composable
 private fun CalculatorStep(call: ToolCall, result: String?, running: Boolean) {
     val c = Ox.colors

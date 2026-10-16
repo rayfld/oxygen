@@ -103,8 +103,9 @@ object MarkdownBlocks {
                     while (j < lines.size) {
                         val candidate = lines[j]
                         val item = if (isOrdered) orderedRegex.find(candidate) else bulletRegex.find(candidate)
+                        val otherMarker = if (isOrdered) bulletRegex.find(candidate) else orderedRegex.find(candidate)
                         if (item == null) {
-                            if (candidate.isNotBlank() && !headingRegex.matches(candidate) &&
+                            if (otherMarker == null && candidate.isNotBlank() && !headingRegex.matches(candidate) &&
                                 fenceRegex.find(candidate) == null && !candidate.trimStart().startsWith(">") &&
                                 !candidate.contains('|')
                             ) {
